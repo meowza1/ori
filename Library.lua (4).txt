@@ -27,7 +27,12 @@
         Notifications = {Notifs = {}},
         OpenElement = {}; -- type: table or userdata
         EasingStyle = Enum.EasingStyle.Quint;
-        TweeningSpeed = 0.25
+        TweeningSpeed = 0.25,
+        Mobile = {
+            Enabled = InputService.TouchEnabled,
+            MinimumTouchSize = 36,
+            MinimumTextSize = 14
+        }
     }
     
     local themes = {
@@ -224,7 +229,7 @@
             local ParentSize = Parent.Size  
             
             Resizing.InputBegan:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                     IsResizing = true
                     InputLost = input.Position
                     Size = Parent.Size
@@ -232,13 +237,13 @@
             end)
         
             Resizing.InputEnded:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                     IsResizing = false
                 end
             end)
         
             Library:Connection(InputService.InputChanged, function(input, game_event) 
-                if IsResizing and input.UserInputType == Enum.UserInputType.MouseMovement then            
+                if IsResizing and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then            
                     Parent.Size = dim2(
                         Size.X.Scale,
                         math.clamp(Size.X.Offset + (input.Position.X - InputLost.X), ParentSize.X.Offset, Camera.ViewportSize.X), 
@@ -271,25 +276,29 @@
             local Dragging = false 
             local IntialSize = Parent.Position
             local InitialPosition 
+            local DragInput
 
             Parent.InputBegan:Connect(function(Input)
-                if Input.UserInputType == Enum.UserInputType.MouseButton1 then
+                if Input.UserInputType == Enum.UserInputType.MouseButton1 or Input.UserInputType == Enum.UserInputType.Touch then
                     Dragging = true
+                    DragInput = Input
                     InitialPosition = Input.Position
                     InitialSize = Parent.Position
                 end
             end)
 
             Parent.InputEnded:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
                     Dragging = false
+                    DragInput = nil
                 end
             end)
 
             Library:Connection(InputService.InputChanged, function(Input, game_event) 
-                if Dragging and Input.UserInputType == Enum.UserInputType.MouseMovement then
+                if Dragging and (Input == DragInput or Input.UserInputType == Enum.UserInputType.MouseMovement) then
                     local Horizontal = Camera.ViewportSize.X
                     local Vertical = Camera.ViewportSize.Y
+                    local TopInset = GuiService:GetGuiInset().Y
 
                     local NewPosition = dim2(
                         0,
@@ -301,7 +310,7 @@
                         0,
                         math.clamp(
                             InitialSize.Y.Offset + (Input.Position.Y - InitialPosition.Y),
-                            0,
+                            TopInset,
                             Vertical - Parent.Size.Y.Offset
                         )
                     )
@@ -310,6 +319,50 @@
                 end
             end)
         end 
+
+        function Library:ClampToViewport(Object, Padding)
+            if not (Object and Object:IsA("GuiObject")) then
+                return
+            end
+
+            local pad = Padding or 4
+            local TopInset = GuiService:GetGuiInset().Y
+            local Viewport = Camera.ViewportSize
+
+            Object.Position = dim2(
+                0,
+                math.clamp(Object.Position.X.Offset, pad, math.max(pad, Viewport.X - Object.Size.X.Offset - pad)),
+                0,
+                math.clamp(Object.Position.Y.Offset, TopInset + pad, math.max(TopInset + pad, Viewport.Y - Object.Size.Y.Offset - pad))
+            )
+        end
+
+        function Library:ApplyMobileSupport(Object)
+            if not (Library.Mobile.Enabled and Object) then
+                return
+            end
+
+            if Object:IsA("GuiButton") or Object:IsA("TextBox") then
+                if Object:IsA("GuiButton") then
+                    Object.AutoButtonColor = false
+                end
+
+                Object.Size = dim2(
+                    Object.Size.X.Scale,
+                    math.max(Object.Size.X.Offset, Library.Mobile.MinimumTouchSize),
+                    Object.Size.Y.Scale,
+                    math.max(Object.Size.Y.Offset, Library.Mobile.MinimumTouchSize)
+                )
+            end
+
+            if (Object:IsA("TextLabel") or Object:IsA("TextButton") or Object:IsA("TextBox")) and Object.TextSize < Library.Mobile.MinimumTextSize then
+                Object.TextSize = Library.Mobile.MinimumTextSize
+            end
+
+            if Object:IsA("ScrollingFrame") then
+                Object.ScrollBarThickness = math.max(Object.ScrollBarThickness, 8)
+            end
+        end
 
         function Library:Convert(str)
             local Values = {}
@@ -1344,10 +1397,12 @@
                 ins[prop] = value
             end
 
-            if ins == "TextButton" then 
+            if instance == "TextButton" then 
                 ins["AutoButtonColor"] = false 
                 ins["Text"] = ""
             end 
+
+            Library:ApplyMobileSupport(ins)
             
             return ins 
         end
@@ -1384,7 +1439,7 @@
                 Name = "\0";
                 Enabled = true;
                 ZIndexBehavior = Enum.ZIndexBehavior.Global;
-                IgnoreGuiInset = true;
+                IgnoreGuiInset = not Library.Mobile.Enabled;
             });
             
             Library.Other = Library:Create( "ScreenGui" , {
@@ -1392,7 +1447,7 @@
                 Name = "\0";
                 Enabled = false;
                 ZIndexBehavior = Enum.ZIndexBehavior.Sibling;
-                IgnoreGuiInset = true;
+                IgnoreGuiInset = not Library.Mobile.Enabled;
             }); 
 
             local Items = Cfg.Items; do
@@ -1406,6 +1461,7 @@
                         BorderSizePixel = 0;
                         BackgroundColor3 = themes.preset.outline
                     }); Items.Window.Position = dim2(0, Items.Window.AbsolutePosition.X, 0, Items.Window.AbsolutePosition.Y); Library:Themify(Items.Window, "outline", "BackgroundColor3");
+                    Library:ClampToViewport(Items.Window, 8)
 
                     Items.Inline = Library:Create( "Frame" , {
                         Parent = Items.Window;
@@ -1936,7 +1992,10 @@
             end
 
             do -- Other
-                Library:Draggify(Items.Window)
+            Library:Draggify(Items.Window)
+            Library:Connection(Camera:GetPropertyChangedSignal("ViewportSize"), function()
+                Library:ClampToViewport(Items.Window, 8)
+            end)
                 Library:Resizify(Items.Window)
             end
 
